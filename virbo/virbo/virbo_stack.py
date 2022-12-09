@@ -1,12 +1,17 @@
 from aws_cdk import (
     # Duration,
-    Stack,
-    aws_ec2 as ec2, Tags, Fn, CfnTag
+    Stack, Tags, Fn, CfnTag,
+    aws_ec2 as ec2
 )
 from aws_cdk.aws_ec2 import(
-    Vpc, CfnRouteTable, RouterType, CfnRoute, CfnInternetGateway, CfnVPCGatewayAttachment, \
+    Vpc, CfnRouteTable, CfnRoute, CfnInternetGateway, CfnVPCGatewayAttachment, \
     CfnSubnet, CfnSubnetRouteTableAssociation, CfnSecurityGroup, CfnInstance, CfnNetworkInterface
 )
+
+from aws_cdk.aws_iam import(
+    CfnRole, CfnPolicy, PolicyDocument, PolicyStatement, ServicePrincipal, Effect
+)
+
 from constructs import Construct
 from . import config
 import os
@@ -17,7 +22,7 @@ class VirboStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         self.subnets = {}
-        self.vpc = ec2.Vpc(self, 
+        self.vpc = Vpc(self, 
             "VPC",
             cidr="10.0.0.0/16",
             max_azs=4,
@@ -29,20 +34,20 @@ class VirboStack(Stack):
         Tags.of(self.vpc).add(config.NAME, config.PROJECT + "-" +  config.ENVIRONMENT[0] + "-vpc")
 
         # Create internetGateway
-        igw=ec2.CfnInternetGateway(self, "InternetGatewat",
+        igw=CfnInternetGateway(self, "InternetGatewat",
             tags=[
                 CfnTag(key=config.NAME,value=config.PROJECT + "-" +  config.ENVIRONMENT[0] + "-igw"),
                 CfnTag(key=config.ENV,value=config.PROJECT + ":" + config.ENVIRONMENT[0])
             ]
         )
         # Attch igw to vpc
-        ec2.CfnVPCGatewayAttachment(self,"VPCGatewayAttachment",
+        CfnVPCGatewayAttachment(self,"VPCGatewayAttachment",
             vpc_id=self.vpc.vpc_id,
             internet_gateway_id=igw.attr_internet_gateway_id
         )
 
         # Create Route table
-        self.rtb = ec2.CfnRouteTable(self,'RouteTable',
+        self.rtb = CfnRouteTable(self,'RouteTable',
             vpc_id=self.vpc.vpc_id,
             tags=[
                 CfnTag(key=config.NAME,value=config.PROJECT + "-" +  config.ENVIRONMENT[0] + "-routetable"),
@@ -51,7 +56,7 @@ class VirboStack(Stack):
         )
 
         # Route table
-        ec2.CfnRoute(self, 'RouteTablepublic',
+        CfnRoute(self, 'RouteTablepublic',
             route_table_id= self.rtb.ref,
             gateway_id=igw.attr_internet_gateway_id,
             destination_cidr_block=config.CIDR_INTERNET
@@ -128,10 +133,11 @@ class VirboStack(Stack):
             ]
         )
         
-        # ec2 instance
+        # Load user data
         with open(os.path.join(dirname, "user-data.sh"), 'r', encoding='utf-8') as file_user_data:
            user_datas = file_user_data.readlines()
-
+        
+        # ec2 instance
         cfinstance = CfnInstance(self,"InstanceFE",
             key_name=config.KEY_EC2,
             disable_api_termination=False,
@@ -148,13 +154,48 @@ class VirboStack(Stack):
             user_data=Fn.base64(
                 "".join(user_datas)
             ),
-            # user_data=Fn.base64(open(os.path.join(dirname, "user-data.sh"), "r")),
             tags=[
                 CfnTag(key=config.NAME,value=config.PROJECT + "-" +  config.ENVIRONMENT[0] + "-fe-ec2"),
                 CfnTag(key=config.ENV,value=config.PROJECT + ":" + config.ENVIRONMENT[0])
             ] 
         )
+        # role
+        cfnrole=CfnRole(self,"Role",
+            role_name='virbo-ec2-role',
+            assume_role_policy_document=PolicyDocument(
+                statements=[
+                    PolicyStatement(
+                        effect=Effect.ALLOW,
+                        principals=[ServicePrincipal("ec2.amazonaws.com")],
+                        actions=["sts:AssumeRole"]
+                    )
+                ]
+            ),
+            path="/"
+        )
+
+        # policy
+        cfnpolicy=CfnPolicy(self, "policy",
+            policy_name='virbo-S3-policy',
+            roles=[cfnrole.ref],
+            policy_document=PolicyDocument(
+                statements=[
+                    PolicyStatement(
+                        effect= Effect.ALLOW,
+                        actions=[
+                            "s3:ListBucket",
+                            "s3:GetBucketAcl",
+                            "s3:PutObject",
+                            "s3:GetObject"
+                        ],
+                        resources=["*"],
+                    )
+                ]
+            )
+        )
         
+        
+
     def create_subnets(self, count):
         """ Create subnets of the VPC """
         for i in range(count):
@@ -177,5 +218,7 @@ class VirboStack(Stack):
                     route_table_id=self.rtb.ref,
                     subnet_id=self.subnets['subnet' + str(i+1)].ref
         )
+    
+
     
 
