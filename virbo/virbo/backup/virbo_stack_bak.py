@@ -8,23 +8,17 @@ from aws_cdk.aws_ec2 import(
     CfnSubnet, CfnSubnetRouteTableAssociation, CfnSecurityGroup, CfnInstance
 )
 from aws_cdk.aws_rds import CfnDBInstance, CfnDBSubnetGroup
-from aws_cdk.aws_iam import(
-    CfnRole, CfnPolicy, PolicyDocument, PolicyStatement, ServicePrincipal, 
-    Effect, CfnInstanceProfile
-)
+from aws_cdk.aws_iam import CfnRole, CfnPolicy, PolicyDocument, PolicyStatement, ServicePrincipal, Effect, CfnInstanceProfile
 from aws_cdk.aws_s3 import CfnBucket, BlockPublicAccess
 from constructs import Construct
-from . import config
+from .. import config
 import os
 dirname = os.path.dirname(__file__)
 class VirboStack(Stack):
+
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
-        self.__create_enviroment()
-    
-    def __create_enviroment(self):
-        """Create enviroment for Project in AWS"""
-         # S3
+        # S3
         cfnBucket=CfnBucket(self,"s3Bucket",
                 bucket_name=config.PROJECT  + '-' + config.ENVIRONMENT[0],
                 public_access_block_configuration=BlockPublicAccess.BLOCK_ALL,            
@@ -127,9 +121,9 @@ class VirboStack(Stack):
                 destination_cidr_block=config.CIDR_INTERNET
             )
         # Subnet
-        self.create_subnets(count=3)
+        self.create_subnets(count=4)
         # Subnet associate to route table
-        self.create_subnet_route_table_associate(count=3)
+        self.create_subnet_route_table_associate(count=4)
         # Security groups
         cfnSg = CfnSecurityGroup(self,"SecurityGroupEC2",
                 vpc_id=self.cfnVpc.vpc_id,
@@ -201,8 +195,21 @@ class VirboStack(Stack):
                 key_name=config.KEY_EC2,
                 disable_api_termination=False,
                 image_id=config.AMI_EC2,
-                instance_type=config.INSTANCE_TYPE[0], # t3.small
+                instance_type=config.INSTANCE_TYPE[0], # t2.micro
                 iam_instance_profile=cfnInstanceProfile.ref,
+                block_device_mappings=[ec2.CfnInstance.BlockDeviceMappingProperty(
+                    device_name="/dev/sda1",
+                    # the properties below are optional
+                    ebs=ec2.CfnInstance.EbsProperty(
+                        delete_on_termination=False,
+                        encrypted=False,
+                        snapshot_id=config.EBS_SNAPSHOT_ID,
+                        volume_size=config.EBS_SIZE,
+                        volume_type=config.VOLUME_TYPE[1]
+                    ),
+                    no_device=ec2.CfnInstance.NoDeviceProperty(),
+                    virtual_name="ephemeral0"
+                )],
                 network_interfaces=[
                     ec2.CfnInstance.NetworkInterfaceProperty(
                         device_index="0",
@@ -243,7 +250,7 @@ class VirboStack(Stack):
             )
 
     def create_subnets(self, count):
-        """Create subnets of the VPC"""
+        """ Create subnets of the VPC """
         for i in range(count):
             subnet =  CfnSubnet(self, 'Subnet' + str(i+1),
                 vpc_id=self.cfnVpc.vpc_id,
@@ -255,7 +262,6 @@ class VirboStack(Stack):
             self.subnets['subnet' + str(i+1)] = subnet
 
     def create_subnet_route_table_associate(self, count):
-        """Create subnets associate with subnet"""
         for i in range(count):
             CfnSubnetRouteTableAssociation(self,"SubnetRouteTableAssociation" + str(i),
                 route_table_id=self.cfnRtb.ref,
